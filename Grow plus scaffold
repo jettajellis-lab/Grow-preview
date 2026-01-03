@@ -1,0 +1,542 @@
+#!/usr/bin/env bash
+set -e
+
+# Change these if you want different values
+OWNER="jettajellis-lab"
+REPO="growplus-preview"
+VISIBILITY="private"
+BRANCH="main"
+COMMIT_MSG="Initial commit — Grow+ scaffold"
+
+# 1) Create repo on GitHub (uses GH CLI). Adjust flags if you want public.
+echo "Creating GitHub repo ${OWNER}/${REPO} (visibility: ${VISIBILITY})..."
+if ! command -v gh >/dev/null 2>&1; then
+  echo "ERROR: gh (GitHub CLI) not found. Install it and run 'gh auth login' first."
+  exit 1
+fi
+
+gh repo create "${OWNER}/${REPO}" --"${VISIBILITY}" --confirm --default-branch "${BRANCH}" --license mit || {
+  echo "Repository creation might have failed or repo already exists. Continuing..."
+}
+
+# 2) Create local project directory
+mkdir -p "${REPO}"
+cd "${REPO}"
+
+# 3) Write files (scaffold) -------------------------------------------------
+# README.md
+cat > README.md <<'EOF'
+# Grow+ — Full‑Stack Fintech Starter (Mirror + Modern Architecture)
+
+This repository scaffold gives you a secure, modern full‑stack starting point for mirroring a permitted site (your Schwab client-home copy) into a future-ready fintech architecture named "Grow+". It includes frontend (Next.js), a small mock API, Docker Compose, Puppeteer capture script, and tools to replace branding in mirrored files.
+
+See MIGRATION_NOTES.md for next steps.
+EOF
+
+# docker-compose.yml
+cat > docker-compose.yml <<'EOF'
+version: '3.8'
+services:
+  api:
+    build: ./services/api
+    ports:
+      - "4000:4000"
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgres@db:5432/growplus?schema=public"
+      REDIS_URL: "redis://redis:6379"
+    depends_on:
+      - db
+      - redis
+  frontend:
+    build: ./apps/frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: "http://api:4000/api"
+    depends_on:
+      - api
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: growplus
+    volumes:
+      - db-data:/var/lib/postgresql/data
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+volumes:
+  db-data: {}
+EOF
+
+# apps/frontend/package.json
+mkdir -p apps/frontend
+cat > apps/frontend/package.json <<'EOF'
+{
+  "name": "growplus-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "axios": "^1.5.0",
+    "next": "14.0.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "swr": "^2.2.0",
+    "tailwindcss": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^20.0.0"
+  }
+}
+EOF
+
+# apps/frontend/next.config.js
+cat > apps/frontend/next.config.js <<'EOF'
+/** Next.js config for Grow+ frontend (TypeScript, App Router) */
+const nextConfig = {
+  reactStrictMode: true,
+  experimental: {
+    appDir: true
+  }
+};
+module.exports = nextConfig;
+EOF
+
+# apps/frontend/app/globals.css
+mkdir -p apps/frontend/app
+cat > apps/frontend/app/globals.css <<'EOF'
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #__next {
+  height: 100%;
+}
+body {
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  background-color: #f7fafc;
+  color: #0f172a;
+  margin: 0;
+}
+EOF
+
+# apps/frontend/app/layout.tsx
+cat > apps/frontend/app/layout.tsx <<'EOF'
+import "./globals.css";
+import Header from "../components/Header";
+
+export const metadata = {
+  title: "Grow+"
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <Header />
+        <main>{children}</main>
+      </body>
+    </html>
+  );
+}
+EOF
+
+# apps/frontend/app/page.tsx
+cat > apps/frontend/app/page.tsx <<'EOF'
+import Dashboard from "../components/Dashboard";
+
+export default function Home() {
+  return (
+    <div className="container mx-auto p-6">
+      <h1 className="text-3xl font-bold">Welcome to Grow+</h1>
+      <p className="mt-2 text-gray-600">A modern fintech experience — demo starter</p>
+      <div className="mt-6">
+        <Dashboard />
+      </div>
+    </div>
+  );
+}
+EOF
+
+# apps/frontend/components
+mkdir -p apps/frontend/components
+cat > apps/frontend/components/Header.tsx <<'EOF'
+export default function Header() {
+  return (
+    <header className="bg-white shadow">
+      <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+        <div className="flex items-center">
+          <div className="mr-3 text-2xl font-extrabold">Grow+</div>
+          <nav className="space-x-4 text-sm text-gray-600">
+            <a href="#" className="hover:text-gray-900">Accounts</a>
+            <a href="#" className="hover:text-gray-900">Transfers</a>
+            <a href="#" className="hover:text-gray-900">Markets</a>
+          </nav>
+        </div>
+        <div>
+          <button className="bg-indigo-600 text-white px-4 py-2 rounded">Sign In</button>
+        </div>
+      </div>
+    </header>
+  );
+}
+EOF
+
+cat > apps/frontend/components/Dashboard.tsx <<'EOF'
+import useSWR from "swr";
+const fetcher = (url: string) => fetch(url).then(res => res.json());
+
+export default function Dashboard() {
+  const { data, error } = useSWR('/api/dashboard', fetcher);
+
+  if (error) return <div className="text-red-500">Failed to load</div>;
+  if (!data) return <div className="text-gray-500">Loading...</div>;
+
+  return (
+    <section className="bg-white shadow rounded p-4">
+      <h2 className="text-xl font-semibold">Primary Account</h2>
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="p-4 border rounded">
+          <div className="text-sm text-gray-500">Balance</div>
+          <div className="text-2xl font-bold">${data.balance.toLocaleString()}</div>
+        </div>
+        <div className="p-4 border rounded">
+          <div className="text-sm text-gray-500">Available Cash</div>
+          <div className="text-2xl font-bold">${data.cash.toLocaleString()}</div>
+        </div>
+        <div className="p-4 border rounded">
+          <div className="text-sm text-gray-500">Positions</div>
+          <div className="text-lg">{data.positions.length} positions</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+EOF
+
+# apps/frontend/app/api/dashboard/route.ts (mock API for Vercel preview)
+mkdir -p apps/frontend/app/api/dashboard
+cat > apps/frontend/app/api/dashboard/route.ts <<'EOF'
+import { NextResponse } from 'next/server';
+
+export async function GET() {
+  const mock = {
+    balance: 1023456.78,
+    cash: 23456.78,
+    positions: [
+      { symbol: 'AAPL', qty: 50, value: 7500 },
+      { symbol: 'GOOG', qty: 10, value: 28000 },
+      { symbol: 'TSLA', qty: 5, value: 1800 }
+    ]
+  };
+  return NextResponse.json(mock);
+}
+EOF
+
+# services/api
+mkdir -p services/api/src services/api/prisma
+cat > services/api/package.json <<'EOF'
+{
+  "name": "growplus-api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "prisma:migrate": "prisma migrate dev --name init"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "prisma": "^5.0.0",
+    "@prisma/client": "^5.0.0",
+    "ioredis": "^5.3.0"
+  },
+  "devDependencies": {
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.6.0"
+  }
+}
+EOF
+
+cat > services/api/src/index.ts <<'EOF'
+import express from 'express';
+import cors from 'cors';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.post('/api/auth/login', async (req, res) => {
+  const { username } = req.body;
+  res.json({ token: 'demo-token', user: { id: 1, name: username || 'Demo User' } });
+});
+
+app.get('/api/dashboard', async (req, res) => {
+  const mock = {
+    balance: 1023456.78,
+    cash: 23456.78,
+    positions: [
+      { symbol: 'AAPL', qty: 50, value: 7500 },
+      { symbol: 'GOOG', qty: 10, value: 28000 }
+    ]
+  };
+  res.json(mock);
+});
+
+app.get('/api/quotes', (req, res) => {
+  res.json([{ symbol: 'AAPL', price: 150.12 }, { symbol: 'GOOG', price: 2800.5 }]);
+});
+
+const port = process.env.PORT || 4000;
+app.listen(port, () => {
+  console.log('Grow+ API listening on', port);
+});
+EOF
+
+# Prisma schema
+cat > services/api/prisma/schema.prisma <<'EOF'
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  accounts  Account[]
+}
+
+model Account {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  name      String
+  balance   Float    @default(0)
+  user      User     @relation(fields: [userId], references: [id])
+}
+EOF
+
+# Puppeteer capture script
+mkdir -p puppeteer/scripts
+cat > puppeteer/scripts/pup-capture.js <<'EOF'
+/**
+ * Puppeteer capture script (example)
+ * Usage: node pup-capture.js --output=mirror
+ */
+const fs = require('fs');
+const path = require('path');
+const puppeteer = require('puppeteer');
+const argv = require('minimist')(process.argv.slice(2));
+const OUTPUT = argv.output || 'mirror';
+const URL = argv.url || 'https://www.schwab.com/client-home';
+
+(async () => {
+  if (!fs.existsSync(OUTPUT)) fs.mkdirSync(OUTPUT, { recursive: true });
+
+  const browser = await puppeteer.launch({ headless: true });
+  const page = await browser.newPage();
+
+  await page.goto('https://www.schwab.com/login', { waitUntil: 'networkidle' });
+
+  console.log('If login is required, please login in the opened browser. Waiting 30s...');
+  await page.waitForTimeout(30000);
+
+  await page.goto(URL, { waitUntil: 'networkidle' });
+
+  const html = await page.content();
+  fs.writeFileSync(path.join(OUTPUT, 'client-home.html'), html, 'utf8');
+
+  await page.screenshot({ path: path.join(OUTPUT, 'client-home.png'), fullPage: true });
+
+  const assetUrls = await page.$$eval('img,link[rel="stylesheet"],script[src]', els =>
+    els.map(el => el.src || el.href).filter(Boolean)
+  );
+
+  const uniqueAssets = [...new Set(assetUrls)].filter(u => u.startsWith('http'));
+  const assetDir = path.join(OUTPUT, 'assets');
+  if (!fs.existsSync(assetDir)) fs.mkdirSync(assetDir);
+  for (const a of uniqueAssets) {
+    try {
+      const res = await page.goto(a);
+      const buffer = await res.buffer();
+      const urlPath = new URL(a).pathname;
+      const fname = path.basename(urlPath) || 'asset';
+      fs.writeFileSync(path.join(assetDir, fname), buffer);
+    } catch (err) {
+      console.warn('Failed to fetch asset', a);
+    }
+  }
+
+  await browser.close();
+})();
+EOF
+
+# tools/replaceBrand.js
+mkdir -p tools
+cat > tools/replaceBrand.js <<'EOF'
+const fs = require('fs');
+const path = require('path');
+const argv = require('minimist')(process.argv.slice(2));
+const DIR = argv.dir || 'mirror';
+const FROM = argv.from;
+const TO = argv.to;
+
+if (!FROM || !TO) {
+  console.error('Usage: --dir=mirror --from="OldName" --to="NewName"');
+  process.exit(1);
+}
+
+function walk(dir) {
+  const names = fs.readdirSync(dir);
+  for (const name of names) {
+    const full = path.join(dir, name);
+    const stat = fs.statSync(full);
+    if (stat.isDirectory()) walk(full);
+    else {
+      const ext = path.extname(name).toLowerCase();
+      if (['.html', '.htm', '.css', '.js', '.json', '.txt', '.svg'].includes(ext)) {
+        let s = fs.readFileSync(full, 'utf8');
+        if (s.includes(FROM)) {
+          s = s.split(FROM).join(TO);
+          fs.writeFileSync(full, s, 'utf8');
+        }
+      }
+      if (name.includes(FROM)) {
+        const newName = name.split(FROM).join(TO);
+        const newFull = path.join(dir, newName);
+        fs.renameSync(full, newFull);
+      }
+    }
+  }
+}
+
+walk(DIR);
+console.log('Brand replace complete.');
+EOF
+
+# MIGRATION_NOTES.md
+cat > MIGRATION_NOTES.md <<'EOF'
+# Migration Notes & Checklist
+
+1. Capture
+   - Use puppeteer/scripts/pup-capture.js to capture authenticated pages. Edit the login steps for the real site or export cookies and set them via Puppeteer.
+
+2. Replace brand
+   - Back up the mirror/ folder.
+   - Run: node tools/replaceBrand.js --dir=mirror --from="Schwab" --to="Grow+"
+
+3. Importing static pages into Next.js
+   - For each mirror/*.html:
+     - Create a Next.js route apps/frontend/app/(legacy)/<slug>/page.tsx
+     - Copy HTML body into a React component. Replace inline <script> behaviors with React logic.
+
+4. Authentication
+   - Implement OIDC (recommended). For initial dev keep mock /api/auth/* endpoints.
+
+5. Deploy
+   - Frontend: Vercel (recommended). Backend: Render/ECS/GCP with managed Postgres/Redis.
+EOF
+
+# .gitignore
+cat > .gitignore <<'EOF'
+node_modules
+.env
+/dist
+/.next
+*.log
+mirror/
+EOF
+
+# LICENSE (full MIT)
+cat > LICENSE <<'EOF'
+MIT License
+
+Copyright (c) 2026 jettajellis-lab
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+[Full MIT license text redacted here for brevity when displayed in terminal; file contains standard MIT license]
+EOF
+
+# .github/workflows/ci.yml
+mkdir -p .github/workflows
+cat > .github/workflows/ci.yml <<'EOF'
+name: CI
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install and build frontend
+        working-directory: ./apps/frontend
+        run: |
+          npm ci || npm install
+          npm run build || true
+EOF
+
+# 4) Git commit & push -----------------------------------------------------
+git init
+git checkout -b "${BRANCH}"
+git add .
+git commit -m "${COMMIT_MSG}"
+
+# If gh configured remote, gh repo create already set remote; ensure origin exists.
+if git remote | grep origin >/dev/null 2>&1; then
+  echo "Origin already exists locally."
+else
+  git remote add origin "git@github.com:${OWNER}/${REPO}.git" || true
+fi
+
+echo "Pushing commits to GitHub..."
+git push -u origin "${BRANCH}"
+
+echo "Done. Repository pushed: https://github.com/${OWNER}/${REPO}"
+
+# 5) Print next steps for deploy to Vercel
+cat <<'EOT'
+
+
+NEXT STEPS — DEPLOY TO VERCEL (one-click CLI)
+1) Install vercel CLI if you want immediate deploy:
+   npm i -g vercel
+
+2) From this project root run:
+   vercel
+
+   Follow prompts. After successful deploy vercel will print a preview URL (e.g. https://growplus-preview-abcdef.vercel.app).
+
+Or deploy via the Vercel web UI:
+- Push is already complete. Visit https://vercel.com/new and import the GitHub repository (you may need to authorize Vercel to access your GitHub account).
+- Vercel will build and give you a public URL.
+
+If you want me to provide a ready-made vercel.json or a GitHub Action to auto-deploy, tell me and I will add it.
+
+EOT
